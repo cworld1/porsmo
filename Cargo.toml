@@ -1,6 +1,6 @@
 [package]
 name = "porsmo"
-version = "0.3.4"
+version = "0.3.4-patch"
 edition = "2021"
 readme = "README.md"
 license = "MIT"
