@@ -12,6 +12,51 @@ use crossterm::{queue, style::Color, style::Stylize};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
+fn progress_bar(elapsed: Duration, target: Duration, width: usize) -> String {
+    let ratio = if target.is_zero() {
+        1.0
+    } else {
+        (elapsed.as_secs_f64() / target.as_secs_f64()).clamp(0.0, 1.0)
+    };
+    let filled = (ratio * width as f64).round() as usize;
+    let filled = filled.min(width);
+    let empty = width - filled;
+    let percent = (ratio * 100.0).round() as usize;
+    format!("[{}{}] {percent:>3}%", "█".repeat(filled), "-".repeat(empty))
+}
+
+const UI_WIDTH: usize = 50;
+
+fn frame_top() -> String {
+    format!("╭{}╮", "─".repeat(UI_WIDTH))
+}
+
+fn frame_bottom() -> String {
+    format!("╰{}╯", "─".repeat(UI_WIDTH))
+}
+
+fn frame_sep() -> String {
+    format!("│{}│", "─".repeat(UI_WIDTH))
+}
+
+fn frame_line(s: &str) -> String {
+    let content = if s.len() >= UI_WIDTH {
+        s[..UI_WIDTH].to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(UI_WIDTH - s.len()))
+    };
+    format!("│{}│", content)
+}
+
+fn center_text(s: &str) -> String {
+    if s.len() >= UI_WIDTH {
+        s[..UI_WIDTH].to_string()
+    } else {
+        let pad = (UI_WIDTH - s.len()) / 2;
+        format!("{}{}{}", " ".repeat(pad), s, " ".repeat(UI_WIDTH - pad - s.len()))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub enum Mode {
     #[default]
@@ -272,32 +317,147 @@ fn pomodoro_show(
             queue!(
                 out,
                 MoveTo(0, 0),
-                Print(skip_to.with(color)),
+                Print(frame_top()),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(round_number),
+                // title
+                Print("│"),
+                Print(center_text(skip_to).with(color)),
+                Print("│"),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(SKIP_CONTROLS),
+                Print(frame_sep()),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // blank line above where time would be
+                Print(frame_line("")),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // progress bar (centered)
+                Print("│"),
+                Print(" ".repeat((UI_WIDTH - (1 + 30 + 1 + 1 + 4)) / 2)),
+                Print("["),
+                Print("-".repeat(30).with(Color::DarkGrey)),
+                Print("] "),
+                Print("  0%".with(Color::White)),
+                Print(" ".repeat((UI_WIDTH - (1 + 30 + 1 + 1 + 4) + 1) / 2)),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // blank line below progress for symmetry
+                Print(frame_line("")),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_sep()),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // controls (uncolored borders, dimmed text)
+                Print("│"),
+                Print(SKIP_CONTROLS.with(Color::DarkGrey)),
+                Print(" ".repeat(UI_WIDTH.saturating_sub(SKIP_CONTROLS.len()))),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_line(&round_number)),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_bottom()),
                 Clear(ClearType::FromCursorDown),
             )?;
         }
         UIMode::Running(stopwatch) if stopwatch.elapsed() < target => {
             let time_left = target.saturating_sub(stopwatch.elapsed());
+            let time_raw = format_duration(&time_left);
+            let styled_time = time_raw.clone().with(running_color(stopwatch.started()));
+            let bar_width = 30usize;
+            let ratio = if target.is_zero() {
+                1.0
+            } else {
+                (stopwatch.elapsed().as_secs_f64() / target.as_secs_f64()).clamp(0.0, 1.0)
+            };
+            let filled = (ratio * bar_width as f64).round() as usize;
+            let empty = bar_width.saturating_sub(filled);
+            let percent = (ratio * 100.0).round() as usize;
+            let percent_str = format!("{percent:>3}%");
+            let content_len = 1 + bar_width + 1 + 1 + percent_str.len();
+            let pad_left = (UI_WIDTH.saturating_sub(content_len)) / 2;
+            let pad_right = UI_WIDTH.saturating_sub(content_len + pad_left);
+
+            // split controls into two reasonable lines to avoid truncation
+            let parts: Vec<&str> = CONTROLS.split(',').map(|s| s.trim()).collect();
+            let mid = (parts.len() + 1) / 2;
+            let controls1 = parts[..mid].join(", ");
+            let controls2 = parts[mid..].join(", ");
+            let controls1_len = controls1.len();
+            let controls2_len = controls2.len();
 
             queue!(
                 out,
                 MoveTo(0, 0),
-                Print(default_title(session.mode)),
+                Print(frame_top()),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(format_duration(&time_left).with(running_color(stopwatch.started())),),
+                // title: print borders separately so frame isn't colored
+                Print("│"),
+                Print(center_text(default_title(session.mode)).with(Color::Cyan)),
+                Print("│"),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(CONTROLS),
+                Print(frame_sep()),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(round_number),
+                // blank line above time for symmetry
+                Print(frame_line("")),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // time line (centered)
+                Print("│"),
+                Print(" ".repeat((UI_WIDTH.saturating_sub(time_raw.len()))/2)),
+                Print(styled_time),
+                Print(" ".repeat(UI_WIDTH.saturating_sub(time_raw.len()) - (UI_WIDTH.saturating_sub(time_raw.len()))/2)),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // blank line below time for symmetry
+                Print(frame_line("")),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // centered colored progress bar
+                Print("│"),
+                Print(" ".repeat(pad_left)),
+                Print("["),
+                Print("█".repeat(filled).with(running_color(stopwatch.started()))),
+                Print("-".repeat(empty).with(Color::DarkGrey)),
+                Print("] "),
+                Print(percent_str.with(Color::White)),
+                Print(" ".repeat(pad_right)),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // middle separator (blank line for spacing)
+                Print(frame_line("")),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_sep()),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // controls split into two lines and dimmed (print borders separately)
+                Print("│"),
+                Print(controls1.clone().with(Color::DarkGrey)),
+                Print(" ".repeat(UI_WIDTH.saturating_sub(controls1_len))),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print("│"),
+                Print(controls2.clone().with(Color::DarkGrey)),
+                Print(" ".repeat(UI_WIDTH.saturating_sub(controls2_len))),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_line(&round_number)),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_bottom()),
                 Clear(ClearType::FromCursorDown),
             )?;
         }
@@ -306,25 +466,49 @@ fn pomodoro_show(
             let (title, message) = alert_message(session.next().mode);
             alerter.alert_once(title, message);
 
+            let plus_raw = format!("+{}", format_duration(&excess_time));
+            let pad_plus = UI_WIDTH.saturating_sub(plus_raw.len());
+
             queue!(
                 out,
                 MoveTo(0, 0),
-                Print(end_title(session.next().mode)),
+                Print(frame_top()),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(
-                    format!("+{}", format_duration(&excess_time),)
-                        .with(running_color(stopwatch.started()))
-                ),
+                Print(frame_line(&center_text(end_title(session.next().mode)))),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(ENDING_CONTROLS),
+                Print(frame_sep()),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(round_number),
+                // blank line above excess time for symmetry
+                Print(frame_line("")),
                 Clear(ClearType::UntilNewLine),
                 MoveToNextLine(1),
-                Print(message),
+                // excess time line with styling but correct padding
+                Print("│"),
+                Print(plus_raw.with(running_color(stopwatch.started()))),
+                Print(" ".repeat(pad_plus)),
+                Print("│"),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                // blank line below excess time for symmetry
+                Print(frame_line("")),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_line(&progress_bar(target, target, 30))),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_line(ENDING_CONTROLS)),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_line(&round_number)),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_line(message)),
+                Clear(ClearType::UntilNewLine),
+                MoveToNextLine(1),
+                Print(frame_bottom()),
                 Clear(ClearType::FromCursorDown),
             )?;
         }
