@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "porsmo"
-version = "0.3.4"
+version = "0.3.4-patch"
 dependencies = [
  "clap",
  "crossterm",
