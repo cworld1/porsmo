@@ -105,6 +105,7 @@ impl From<KeyEvent> for Command {
     }
 }
 
+#[allow(dead_code)]
 pub struct CommandIter;
 
 impl Iterator for CommandIter {
